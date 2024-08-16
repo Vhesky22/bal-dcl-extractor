@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QProgressBar
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt, QRect
+import os
 
 class LoadingScreen(QWidget):
     def __init__(self):
@@ -15,7 +16,14 @@ class LoadingScreen(QWidget):
         # Create a QLabel for the background image
         self.background_label = QLabel(self)
         self.background_label.setGeometry(QRect(0, 0, self.width(), self.height()))
-        self.background_pixmap = QPixmap("./resources/wallpapers/loading_screen.jpg")
+
+        # Calculate the path to the image
+        base_path = os.path.dirname(__file__)  # Directory of this file
+        image_path = os.path.join(base_path, '..', 'resources', 'wallpapers', 'loading_screen.jpg')
+        image_path = os.path.abspath(image_path)  # Convert to absolute path
+
+        # Load the pixmap and set the background image
+        self.background_pixmap = QPixmap(image_path)
         self.update_background_image()
 
         # Create the widgets to be stacked on top of the background
@@ -28,8 +36,8 @@ class LoadingScreen(QWidget):
         # Set the layout for the main window
         self.setLayout(self.layout)
 
-        # Update the progress bar value
-        self.progress_bar.setValue(0)  # Initialize progress bar value
+        # Initialize progress bar value
+        self.progress_bar.setValue(0)
 
     def update_background_image(self):
         # Center the image and ensure it fits within the window
@@ -45,6 +53,5 @@ class LoadingScreen(QWidget):
     def set_progress(self, value):
         self.progress_bar.setValue(value)
         if value == 100:
-            # Remove the call to show_create_database_dialog() if it's not implemented
-            # self.show_create_database_dialog()
+            # Placeholder for additional functionality
             pass
