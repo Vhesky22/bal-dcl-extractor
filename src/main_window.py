@@ -144,9 +144,9 @@ class MainWindow(QMainWindow):
                 # After processing the file, refresh the QListView
                 self.load_hole_id_list()
                 # Update LITHO_2 column based on lithology_ref table
-                self.update_litho_2_column()
-                self.update_structure_2_column()
-                self.update_alteration_2_column()
+                self.update_litho_1_column()
+                self.update_structure_1_column()
+                self.update_alteration_1_column()
                 self.progress_bar.setVisible(False)
 
     def process_file(self, file_path):
@@ -171,13 +171,13 @@ class MainWindow(QMainWindow):
             from_l = round(row[1], 3) if len(row) > 1 and row[1] is not None else 0.0
             to_l = round(row[2], 3) if len(row) > 2 and row[2] is not None else 0.0
             run_l = round(row[3], 3) if len(row) > 3 and row[3] is not None else 0.0
-            litho_1 = row[8] if len(row) > 8 else ""
-            struc_1 = row[7] if len(row) > 7 else ""
-            alt_1 = row[22] if len(row) > 22 else ""
+            litho_2 = row[8] if len(row) > 8 else ""
+            struc_2 = row[7] if len(row) > 7 else ""
+            alt_2 = row[22] if len(row) > 22 else ""
             description = row[47] if len(row) > 47 else ""
 
             # Insert data into the database
-            self.insert_data(hole_id, from_l, to_l, run_l, litho_1, struc_1, alt_1, description)
+            self.insert_data(hole_id, from_l, to_l, run_l, litho_2, struc_2, alt_2, description)
 
             # Update progress bar
             self.progress_bar.setValue(index)
@@ -186,16 +186,16 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         QMessageBox.information(self, "Success", "File imported successfully.")
 
-    def insert_data(self, hole_id, from_l, to_l, run_l, litho_1, struc_1, alt_1, description):
+    def insert_data(self, hole_id, from_l, to_l, run_l, litho_2, struc_2, alt_2, description):
         if not self.db_connection:
             QMessageBox.warning(self, "Database Error", "No database connection. Please open or create a database first.")
             return
 
         try:
             self.cursor.execute("""
-                INSERT INTO detailedlog_composite (hole_id, from_l, to_l, run_l, litho_1, struc_1, alt_1, description)
+                INSERT INTO detailedlog_composite (hole_id, from_l, to_l, run_l, litho_2, struc_2, alt_2, description)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (hole_id, from_l, to_l, run_l, litho_1, struc_1, alt_1, description))
+            """, (hole_id, from_l, to_l, run_l, litho_2, struc_2, alt_2, description))
             self.db_connection.commit()
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Database Error", f"An error occurred: {e}")
@@ -487,7 +487,7 @@ class MainWindow(QMainWindow):
         else:
             super().keyPressEvent(event)
 
-    def update_litho_2_column(self):
+    def update_litho_1_column(self):
         if not self.db_connection:
             QMessageBox.warning(self, "Database Error",
                                 "No database connection. Please open or create a database first.")
@@ -497,10 +497,10 @@ class MainWindow(QMainWindow):
             # Perform the update
             self.cursor.execute("""
                 UPDATE detailedlog_composite
-                SET litho_2 = (
-                    SELECT lithology_ref.litho_2
+                SET litho_1 = (
+                    SELECT lithology_ref.litho_1
                     FROM lithology_ref
-                    WHERE lithology_ref.litho_1 = detailedlog_composite.litho_1
+                    WHERE lithology_ref.litho_2 = detailedlog_composite.litho_2
                 )
             """)
             self.db_connection.commit()
@@ -509,7 +509,7 @@ class MainWindow(QMainWindow):
         except sqlite3.Error as e:
             QMessageBox.warning(self, "Database Error", f"An error occurred: {e}")
 
-    def update_structure_2_column(self):
+    def update_structure_1_column(self):
         if not self.db_connection:
             QMessageBox.warning(self, "Database Error",
                                 "No database connection. Please open or create a database first.")
@@ -519,10 +519,10 @@ class MainWindow(QMainWindow):
             # Perform the update
             self.cursor.execute("""
                 UPDATE detailedlog_composite
-                SET struc_2 = (
-                    SELECT structure_ref.structure_2
+                SET struc_1 = (
+                    SELECT structure_ref.structure_1
                     FROM structure_ref
-                    WHERE structure_ref.structure_1 = detailedlog_composite.struc_1
+                    WHERE structure_ref.structure_2 = detailedlog_composite.struc_2
                 )
             """)
             self.db_connection.commit()
@@ -531,7 +531,7 @@ class MainWindow(QMainWindow):
         except sqlite3.Error as e:
             QMessageBox.warning(self, "Database Error", f"An error occurred: {e}")
 
-    def update_alteration_2_column(self):
+    def update_alteration_1_column(self):
         if not self.db_connection:
             QMessageBox.warning(self, "Database Error",
                                 "No database connection. Please open or create a database first.")
@@ -541,10 +541,10 @@ class MainWindow(QMainWindow):
             # Perform the update
             self.cursor.execute("""
                    UPDATE detailedlog_composite
-                   SET alt_2 = (
-                       SELECT alteration_ref.alt_2
+                   SET alt_1 = (
+                       SELECT alteration_ref.alt_1
                        FROM alteration_ref
-                       WHERE alteration_ref.alt_1 = detailedlog_composite.alt_1
+                       WHERE alteration_ref.alt_2 = detailedlog_composite.alt_2
                    )
                """)
             self.db_connection.commit()

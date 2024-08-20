@@ -14,7 +14,7 @@ class MainApp(QApplication):
         # Create a timer to simulate loading progress
         self.timer = QTimer()
         self.timer.timeout.connect(self.simulate_loading)
-        self.timer.start(10)  # Simulate loading progress every 50 ms
+        self.timer.start(20)  # Simulate loading progress every 50 ms
 
         self.progress = 0
 
