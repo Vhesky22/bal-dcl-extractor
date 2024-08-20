@@ -1,17 +1,122 @@
+import os
+import csv
 import sys
 import sqlite3
 import warnings
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QFileDialog, QMessageBox, QMenuBar,
     QTabWidget, QTableWidget, QTableWidgetItem, QDialog, QLineEdit, QDialogButtonBox, QProgressBar, QListView,
-    QSplitter, QStatusBar, QMenu, QInputDialog)
+    QSplitter, QStatusBar, QMenu, QInputDialog, QLabel, QDockWidget, QTabBar, QDockWidget, QPushButton)
 from PySide6.QtCore import Qt, QStringListModel
-from PySide6.QtGui import QKeySequence, QAction, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QKeySequence, QAction, QStandardItem, QStandardItemModel, QShortcut
 import openpyxl
 import pandas as pd
 from geological_ref import create_database  # Ensure this import matches your project structure
 
+
 warnings.filterwarnings("ignore", message="Data Validation extension is not supported and will be removed")
+
+def save_table_widget_data(table_widget):
+    # Get file name and format from user
+    options = QFileDialog.Options()
+    file_name, _ = QFileDialog.getSaveFileName(
+        table_widget, 
+        "Save File", 
+        "", 
+        "CSV Files (*.csv);;Excel Files (*.xlsx)",
+        options=options
+    )
+    
+    if not file_name:
+        return  # User canceled the dialog
+
+    if file_name.endswith(".csv"):
+        # Save as CSV
+        with open(file_name, 'w', newline='') as file:
+            writer = csv.writer(file)
+            # Write header
+            header = [table_widget.horizontalHeaderItem(i).text() for i in range(table_widget.columnCount())]
+            writer.writerow(header)
+            # Write data
+            for row in range(table_widget.rowCount()):
+                row_data = [table_widget.item(row, col).text() if table_widget.item(row, col) else "" for col in range(table_widget.columnCount())]
+                writer.writerow(row_data)
+        QMessageBox.information(table_widget, "Success", "Data saved to CSV file.")
+
+    elif file_name.endswith(".xlsx"):
+        # Save as Excel
+        data = []
+        for row in range(table_widget.rowCount()):
+            row_data = [table_widget.item(row, col).text() if table_widget.item(row, col) else "" for col in range(table_widget.columnCount())]
+            data.append(row_data)
+        
+        df = pd.DataFrame(data, columns=[table_widget.horizontalHeaderItem(i).text() for i in range(table_widget.columnCount())])
+        df.to_excel(file_name, index=False)
+        QMessageBox.information(table_widget, "Success", "Data saved to Excel file.")
+
+
+class DetachableTabWidget(QTabWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTabsClosable(True)
+        self.tabBar().setMovable(True)
+        self.tabCloseRequested.connect(self.close_tab)
+        self.tabBarDoubleClicked.connect(self.rename_tab)
+
+        self.shortcut_save = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.shortcut_save.activated.connect(self.save_current_tab_data)
+
+
+    def close_tab(self, index):
+        widget = self.widget(index)
+        if widget:
+            widget.deleteLater()
+        self.removeTab(index)
+
+    def rename_tab(self, index):
+        # Avoid renaming the Composite or Analysis tab
+        if index in (self.indexOf(self.parent().composite_tab), self.indexOf(self.parent().analysis_tab)):
+            return
+
+        current_tab_name = self.tabText(index)
+        new_tab_name, ok = QInputDialog.getText(self, "Rename Tab", "Enter new tab name:", QLineEdit.Normal, current_tab_name)
+        if ok and new_tab_name:
+            self.setTabText(index, new_tab_name)
+    
+    def add_new_window(self):
+        new_tab = QWidget()
+        layout = QVBoxLayout()
+
+        table_widget = QTableWidget()
+        table_widget.setColumnCount(11)  # Set the number of columns
+        table_widget.setRowCount(200)
+        table_widget.setHorizontalHeaderLabels(['HOLE ID', 'FROM', 'TO', 'LENGTH', 'LITHO_1', 'LITHO_2', 'STRUCTURE_1', 'STRUCTURE_2', 'ALT_1', 'ALT_2', 'REMARKS'])
+        
+        # Add the table widget to the layout
+        layout.addWidget(table_widget)
+        
+        # Save button
+        save_btn = QPushButton("Save")
+        layout.addWidget(save_btn)
+
+        # Connect the save button to the save function
+        save_btn.clicked.connect(lambda: save_table_widget_data(table_widget))
+
+        new_tab.setLayout(layout)
+
+        tab_index = self.addTab(new_tab, f"Tab {self.count() + 1}")
+        self.setCurrentIndex(tab_index)
+
+        # Save reference to table_widget in the tab's data
+        new_tab.setProperty("table_widget", table_widget)
+
+    
+    def save_current_tab_data(self):
+        current_widget = self.currentWidget()
+        if isinstance(current_widget, QWidget):
+            table_widget = current_widget.findChild(QTableWidget)
+            if table_widget:
+                save_table_widget_data(table_widget)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -21,8 +126,9 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1060, 800)
 
         # Create tab widget
-        self.tab_widget = QTabWidget()
+        self.tab_widget = DetachableTabWidget()
         self.setCentralWidget(self.tab_widget)
+
 
         # Create QStatusBar
         self.status_bar = QStatusBar()
@@ -77,22 +183,24 @@ class MainWindow(QMainWindow):
 
         # Create menu bar
         self.menu_bar = self.menuBar()
+        
+        #Create File menu
         self.file_menu = self.menu_bar.addMenu("File")
 
-        # Create Import action
-        self.import_action = QAction("Import", self)
-        self.import_action.setShortcut(QKeySequence("Ctrl+I"))
-        self.import_action.triggered.connect(self.import_file)
-        self.file_menu.addAction(self.import_action)
+        self.new_tab_action = QAction("New Tab", self)
+        self.new_tab_action.setShortcut(QKeySequence("Ctrl+N"))
+        self.new_tab_action.triggered.connect(self.create_new_tab)
+        self.file_menu.addAction(self.new_tab_action)
 
-        #Adding Export action
-        self.export_action = QAction("Export", self)
-        self.export_action.setShortcut(QKeySequence("Ctrl+Shift+B"))
-        self.export_action.triggered.connect(self.export_data)
-        self.file_menu.addAction(self.export_action)
+        self.new_window_action = QAction("New Window", self)
+        self.new_window_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        self.new_window_action.triggered.connect(self.create_new_window)
+        self.file_menu.addAction(self.new_window_action)
 
         # Create Database menu
         self.database_menu = self.menu_bar.addMenu("Database")
+
+        #Add Create Connection action
         self.create_connection_action = QAction("Create Connection", self)
         self.create_connection_action.triggered.connect(self.create_connection)
         self.database_menu.addAction(self.create_connection_action)
@@ -107,11 +215,13 @@ class MainWindow(QMainWindow):
         self.close_database_action.triggered.connect(self.close_database)
         self.database_menu.addAction(self.close_database_action)
 
-        # Create View menu
+        #<--End of DATABASE Menu -->
+
+        #<-- Create VIEW Menu -->
         self.view_menu = self.menu_bar.addMenu("View")
 
-        # Add "Hole ID List - Hide" action
-        self.toggle_hole_id_list_action = QAction("Hole ID List - Hide", self)
+        # Add "Hole ID List - Hide" action under VIEW menu
+        self.toggle_hole_id_list_action = QAction("Hide Hole ID List", self)
         self.toggle_hole_id_list_action.triggered.connect(self.toggle_hole_id_list)
         self.view_menu.addAction(self.toggle_hole_id_list_action)
 
@@ -120,6 +230,30 @@ class MainWindow(QMainWindow):
         self.refresh_action.setShortcut(QKeySequence("F5"))
         self.refresh_action.triggered.connect(self.refresh_all)
         self.view_menu.addAction(self.refresh_action)
+
+        # Add toggle Composite tab action
+        self.toggle_composite_tab_action = QAction("Composite Tab", self)
+        self.toggle_composite_tab_action.triggered.connect(self.toggle_composite_tab_visibility)
+        self.view_menu.addAction(self.toggle_composite_tab_action)
+        #<-- end of VIEW Menu -->
+
+
+        #Create Tool Menu, this will extract the JFAL detailed log form version
+        # adding new menu 
+        self.tool_menu = self.menu_bar.addMenu("Tools")
+
+        # Create Import action under TOOL menu
+        self.import_action = QAction("Import", self)
+        self.import_action.setShortcut(QKeySequence("Ctrl+I"))
+        self.import_action.triggered.connect(self.import_file)
+        self.tool_menu.addAction(self.import_action)
+
+        #Adding Export action under TOOL menu
+        self.export_action = QAction("Export", self)
+        self.export_action.setShortcut(QKeySequence("Ctrl+Shift+B"))
+        self.export_action.triggered.connect(self.export_data)
+        self.tool_menu.addAction(self.export_action)
+
 
         # Attempt to establish a database connection and cursor
         self.update_status_bar()
@@ -175,6 +309,22 @@ class MainWindow(QMainWindow):
             struc_2 = row[7] if len(row) > 7 else ""
             alt_2 = row[22] if len(row) > 22 else ""
             description = row[47] if len(row) > 47 else ""
+
+            """
+            Version 1.1 5-Feb-2024 JFAL BALABAG VERSION 
+            
+            No. of columns - 50
+            
+            hole_id - column 1 index 0 
+            from_l - column 2 index 1 -> (using 2 decimal places)
+            to_l - column 3 index 2 -> (using 2 decimal places)
+            run_l - column 4 index 3 -> (using 2 decimal places)
+            litho_2 - column 9 index 8
+            struc_2 - column 8 index 7
+            alt_2 - column 23 index 22
+            description - row 48 index 47
+            
+            """
 
             # Insert data into the database
             self.insert_data(hole_id, from_l, to_l, run_l, litho_2, struc_2, alt_2, description)
@@ -440,10 +590,22 @@ class MainWindow(QMainWindow):
     def toggle_hole_id_list(self):
         if self.hole_id_list_view.isVisible():
             self.hole_id_list_view.setVisible(False)
-            self.toggle_hole_id_list_action.setText("Hole ID List - Show")
+            self.toggle_hole_id_list_action.setText("Show Hole ID List")
         else:
             self.hole_id_list_view.setVisible(True)
-            self.toggle_hole_id_list_action.setText("Hole ID List - Hide")
+            self.toggle_hole_id_list_action.setText("Hide Hole ID List")
+
+    def toggle_composite_tab_visibility(self):
+        """Toggle the visibility of the Composite tab."""
+        composite_tab_index = self.tab_widget.indexOf(self.composite_tab)
+
+        if self.composite_tab.isVisible():
+            self.tab_widget.removeTab(composite_tab_index)
+            self.toggle_composite_tab_action.setText("Show Composite Tab")
+        else:
+            self.tab_widget.insertTab(0, self.composite_tab, "Composite")
+            self.toggle_composite_tab_action.setText("Hide Composite Tab")
+            
 
     def delete_selected_items(self):
         selected_indexes = self.hole_id_list_view.selectedIndexes()
@@ -622,6 +784,48 @@ class MainWindow(QMainWindow):
         data = self.cursor.fetchall()
         return data
 
+    def create_new_tab(self):
+        """Create a new tab next to the Analysis tab."""
+        # Create a new QWidget for the tab
+        new_tab = QWidget()
+
+        # Optionally, set up a layout and widgets for the new tab
+        layout = QVBoxLayout(new_tab)
+
+        table_widget = QTableWidget()
+        table_widget.setColumnCount(11)  # Set the number of columns
+        table_widget.setRowCount(200)
+        table_widget.setHorizontalHeaderLabels(['HOLE ID', 'FROM', 'TO', 'LENGTH', 'LITHO_1', 'LITHO_2', 'STRUCTURE_1', 'STRUCTURE_2', 'ALT_1', 'ALT_2', 'REMARKS'])
+        layout.addWidget(table_widget)
+
+
+        # Get the current number of tabs to name the new tab appropriately
+        tab_count = self.tab_widget.count()
+        new_tab_name = f"New Tab {tab_count - 1}"  # Adjust index to be user-friendly
+
+        # Add the new tab to the DetachableTabWidget
+        self.tab_widget.addTab(new_tab, new_tab_name)
+
+        # Switch to the new tab
+        self.tab_widget.setCurrentWidget(new_tab)
+
+        # Optional: Set window title to the new tab name
+        new_tab.setWindowTitle(new_tab_name)
+
+    def create_new_window(self):
+        new_docking_window = QDockWidget(self)
+        new_docking_window.setAllowedAreas(Qt.AllDockWidgetAreas)
+
+        #Create a new DetacheableTabWidget and add a new tab to it
+        new_tab_widget = DetachableTabWidget()
+        new_tab_widget.add_new_window()
+        new_docking_window.setWidget(new_tab_widget)
+
+        self.addDockWidget(Qt.RightDockWidgetArea, new_docking_window)
+
+    def closeEvent(self, event):
+        # Handle the close event
+        event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

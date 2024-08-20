@@ -19,6 +19,7 @@ def create_database(db_connection):
             alt_1 TEXT,
             alt_2 TEXT,
             description TEXT,
+            date_relogged TEXT,
             logger TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
