@@ -117,6 +117,8 @@ class DetachableTabWidget(QTabWidget):
             table_widget = current_widget.findChild(QTableWidget)
             if table_widget:
                 save_table_widget_data(table_widget)
+    
+    
 
 class MainWindow(QMainWindow):
     def __init__(self):
