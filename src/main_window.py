@@ -12,6 +12,7 @@ from PySide6.QtGui import QKeySequence, QAction, QStandardItem, QStandardItemMod
 import openpyxl
 import pandas as pd
 from geological_ref import create_database  # Ensure this import matches your project structure
+from datetime import datetime
 
 
 warnings.filterwarnings("ignore", message="Data Validation extension is not supported and will be removed")
@@ -139,7 +140,7 @@ class MainWindow(QMainWindow):
         # Initialize database name
         self.db_name = "Not Connected"
         self.db_connection = None  # Set initial connection to None
-        self.cursor = None
+        self.cursor = None  
 
         # Create Composite tab
         self.composite_tab = QWidget()
@@ -179,7 +180,6 @@ class MainWindow(QMainWindow):
 
         # Create progress bar
         self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
         self.progress_bar.setVisible(False)  # Hide progress bar initially
         composite_layout.addWidget(self.progress_bar)
 
@@ -255,6 +255,19 @@ class MainWindow(QMainWindow):
         self.export_action.setShortcut(QKeySequence("Ctrl+Shift+B"))
         self.export_action.triggered.connect(self.export_data)
         self.tool_menu.addAction(self.export_action)
+        #<-- end of TOOL menu -->
+
+        self.drillhole_menu = self.menu_bar.addMenu("Drillholes")
+        
+        #this tool can import database of RST, this will act as a data validation reference
+        self.add_dh_data = QAction("Add Project", self)
+        self.add_dh_data.triggered.connect(self.import_collar_data)
+        self.drillhole_menu.addAction(self.add_dh_data)
+
+        self.open_dh_data = QAction("Open Project", self)
+        self.open_dh_data.triggered.connect(self.open_project)
+        self.drillhole_menu.addAction(self.open_dh_data)
+        #<-- end of DRILLHOLES menu -->
 
 
         # Attempt to establish a database connection and cursor
@@ -294,23 +307,24 @@ class MainWindow(QMainWindow):
 
         sheet = workbook["Log1"]
 
-        # Total rows calculation
-        total_rows = sum(1 for _ in sheet.iter_rows(min_row=6, min_col=2, values_only=True))
+        # Calculate the total number of rows to process
+        total_rows = sheet.max_row - 5  # Since we're starting from row 6
         self.progress_bar.setMaximum(total_rows)
 
         for index, row in enumerate(sheet.iter_rows(min_row=6, min_col=2, max_col=49, values_only=True), start=1):
-            if row[0] is None:
-                break
+            # Make sure to continue processing even if some cells are None
+            if all(cell is None for cell in row):
+                continue  # Skip completely empty rows
 
             # Ensure the row length matches the number of expected columns
-            hole_id = row[0] if len(row) > 0 else ""
+            hole_id = row[0] if len(row) > 0 and row[0] is not None else ""
             from_l = round(row[1], 3) if len(row) > 1 and row[1] is not None else 0.0
             to_l = round(row[2], 3) if len(row) > 2 and row[2] is not None else 0.0
             run_l = round(row[3], 3) if len(row) > 3 and row[3] is not None else 0.0
-            litho_2 = row[8] if len(row) > 8 else ""
-            struc_2 = row[7] if len(row) > 7 else ""
-            alt_2 = row[22] if len(row) > 22 else ""
-            description = row[47] if len(row) > 47 else ""
+            struc_2 = row[7] if len(row) > 7 and row[7] is not None else ""
+            litho_2 = row[8] if len(row) > 8 and row[8] is not None else ""
+            alt_2 = row[21] if len(row) > 21 and row[21] is not None else ""
+            description = row[47] if len(row) > 47 and row[47] is not None else ""
 
             """
             Version 1.1 5-Feb-2024 JFAL BALABAG VERSION 
@@ -608,7 +622,6 @@ class MainWindow(QMainWindow):
             self.tab_widget.insertTab(0, self.composite_tab, "Composite")
             self.toggle_composite_tab_action.setText("Hide Composite Tab")
             
-
     def delete_selected_items(self):
         selected_indexes = self.hole_id_list_view.selectedIndexes()
         selected_hole_ids = [index.data() for index in selected_indexes]
@@ -759,6 +772,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export Error", f"An error occurred while exporting: {e}")
 
     def save_to_csv(self, file_path):
+
         try:
             data = self.fetch_data()
             df = pd.DataFrame(data, columns=[
@@ -785,6 +799,130 @@ class MainWindow(QMainWindow):
         self.cursor.execute(query)
         data = self.cursor.fetchall()
         return data
+
+    def import_collar_data(self):
+        if not self.db_connection:
+            QMessageBox.warning(self, "Error", "No database connection. Please open a database first.")
+            return
+
+        # Open file dialog to select an Excel file
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Excel File", "", "Excel Files (*.xlsx *.xlsm)")
+
+        if not file_path:
+            return  # User canceled the file dialog
+
+        try:
+            workbook = openpyxl.load_workbook(file_path, data_only=True)
+
+            if "COLLAR_RAW" not in workbook.sheetnames:
+                QMessageBox.warning(self, "Error", "Sheet 'COLLAR_RAW' not found in the workbook.")
+                return
+
+            sheet = workbook["COLLAR_RAW"]
+
+            # Initialize the progress bar
+            total_rows = sheet.max_row - 1  # Total rows minus the header
+            self.progress_bar.setMaximum(total_rows)  # Set the maximum value to the number of data rows
+            self.progress_bar.setValue(0)  # Start from 0
+            self.progress_bar.setVisible(True)  # Make the progress bar visible
+
+            # Iterate through the rows in the COLLAR_RAW sheet
+            for index, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=1):
+                data = tuple(row)  # Convert the row to a tuple
+                self.insert_collar_data(data)
+
+                # Update the progress bar
+                self.progress_bar.setValue(index)
+                
+                # Process events to update the UI in real-time
+                QApplication.processEvents()
+
+            QMessageBox.information(self, "Success", "Data imported successfully.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to import data: {str(e)}")
+        finally:
+            self.progress_bar.setVisible(False)  # Hide the progress bar when done
+
+    def insert_collar_data(self, data):
+        # Convert any datetime objects to string format (ISO 8601)
+        data = [value.isoformat() if isinstance(value, datetime) else value for value in data]
+
+        if len(data) != 34:  # Expecting 32 columns from the Excel sheet
+            QMessageBox.critical(self, "Data Error", f"Expected 34 values, but got {len(data)}. Row data: {data}")
+            return
+
+        query = """
+        INSERT INTO collar_data (
+            pdh_id, hole_id, location_x, location_y, location_z,
+            azim, dip, target_length, actual_length, date_started,
+            date_completed, sup_geo, datum, projection, hole_type, hole_class,
+            drilled_by, company, assay_lab, project_id, claim,
+            prospect, purpose, project, survey_type, year, zone,
+            rig_type, rig_no, core_size, core_storage, remarks, status, dup_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+        try:
+            self.cursor.execute(query, data)
+            self.db_connection.commit()
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"An error occurred: {e}")
+
+    def execute_query(self, query, data=None):
+        try:
+            if data:
+                self.cursor.execute(query, data)
+            else:
+                self.cursor.execute(query)
+            
+            self.db_connection.commit()
+        except sqlite3.Error as e:
+            print(f"SQLite error: {e}")
+
+    def open_project(self):
+        if not self.db_connection:
+            QMessageBox.warning(self, "Error", "No database connection. Please open a database first.")
+            return
+
+        # Create a new tab for the collar_data table
+        collar_tab = QWidget()
+        collar_layout = QVBoxLayout()
+        
+        # Create a table widget to display collar_data
+        self.collar_table = QTableWidget()
+        collar_layout.addWidget(self.collar_table)
+        collar_tab.setLayout(collar_layout)
+        
+        # Add the new tab
+        self.tab_widget.addTab(collar_tab, "Collar Data")
+        
+        # Populate the table with data
+        self.populate_collar_data_table()
+
+    def populate_collar_data_table(self):
+        try:
+            query = "SELECT * FROM collar_data"
+            self.cursor.execute(query)
+            rows = self.cursor.fetchall()
+
+            # Set column count based on the collar_data table structure
+            self.collar_table.setColumnCount(len(rows[0]))
+            self.collar_table.setHorizontalHeaderLabels(['ID', 'PDH ID', 'HOLE ID', 'LOCATION X', 'LOCATION Y', 'ELEVATION', 'AZIM', 'DIP', 'TARGET LENGTH', 'ACTUAL LENGTH',
+        'DATE STARTED', 'DATE COMPLETED', 'SUP GEO', 'DATUM', 'PROJECTION', 'HOLE TYPE', 'HOLE CLASS', 'DRILLED BY', 'COMPANY', 'ASSAY LAB', 'PROJECT ID', 'CLAIM',
+        'PROSPECT', 'PURPOSE', 'PROJECT', 'SURVEY TYPE', 'YEAR', 'ZONE', 'RIG TYPE', 'RIG NO.', 'CORE SIZE', 'CORE STORAGE', 'REMARKS', 'STATUS', 'DUP ID'])
+
+            # Set row count
+            self.collar_table.setRowCount(len(rows))
+
+            # Populate the table
+            for row_index, row_data in enumerate(rows):
+                for col_index, cell_data in enumerate(row_data):
+                    item = QTableWidgetItem(str(cell_data))
+                    self.collar_table.setItem(row_index, col_index, item)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
 
     def create_new_tab(self):
         """Create a new tab next to the Analysis tab."""

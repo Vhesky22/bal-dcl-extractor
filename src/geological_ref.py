@@ -4,6 +4,46 @@ def create_database(db_connection):
 
     cursor = db_connection.cursor()
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS collar_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pdh_id TEXT NOT NULL,
+            hole_id TEXT NOT NULL,
+            location_x DECIMAL(7,2),
+            location_y DECIMAL(7,2),
+            location_z DECIMAL(7,2),
+            azim INT,
+            dip INT,
+            target_length DECIMAL(7,2),
+            actual_length DECIMAL(7,2),
+            date_started TEXT NOT NULL,
+            date_completed TEXT NOT NULL,
+            sup_geo TEXT NOT NULL,
+            datum TEXT,
+            projection TEXT,
+            hole_type TEXT,
+            hole_class TEXT,
+            drilled_by TEXT,
+            company TEXT,
+            assay_lab TEXT,
+            project_id TEXT,
+            claim TEXT,
+            prospect TEXT,
+            purpose TEXT,
+            project TEXT,
+            survey_type TEXT,
+            year TEXT,
+            zone TEXT,
+            rig_type TEXT,
+            rig_no INT,
+            core_size TEXT,
+            core_storage TEXT,
+            remarks TEXT,
+            status TEXT,
+            dup_id TEXT
+        )
+    ''')
+
     # Create tables
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS detailedlog_composite (
@@ -94,7 +134,7 @@ def create_database(db_connection):
         ''', [
             ('Advance Argillic','AA','Advance Argillic'),
             ('Argillic', 'AR', 'Argillic'),
-            ('Chloritic', 'CHL', 'Chloritized'),
+            ('Chloritic', 'CH', 'Chloritized'),
             ('Intermiddiate Argillic', 'IA', 'Intermediate Argillic'),
             ('Sericitic', 'SR', 'Sericitic'),
             ('Propylitic', 'PR', 'Propylitic'),
