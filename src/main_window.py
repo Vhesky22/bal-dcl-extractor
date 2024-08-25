@@ -6,9 +6,9 @@ import warnings
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QFileDialog, QMessageBox, QMenuBar,
     QTabWidget, QTableWidget, QTableWidgetItem, QDialog, QLineEdit, QDialogButtonBox, QProgressBar, QListView,
-    QSplitter, QStatusBar, QMenu, QInputDialog, QLabel, QDockWidget, QTabBar, QDockWidget, QPushButton)
+    QSplitter, QStatusBar, QMenu, QInputDialog, QLabel, QDockWidget, QTabBar, QDockWidget, QPushButton, QHeaderView)
 from PySide6.QtCore import Qt, QStringListModel
-from PySide6.QtGui import QKeySequence, QAction, QStandardItem, QStandardItemModel, QShortcut
+from PySide6.QtGui import QKeySequence, QAction, QStandardItem, QStandardItemModel, QShortcut, QColor
 import openpyxl
 import pandas as pd
 from geological_ref import create_database  # Ensure this import matches your project structure
@@ -120,7 +120,68 @@ class DetachableTabWidget(QTabWidget):
                 save_table_widget_data(table_widget)
     
     
+class AnalysisWindow(QWidget):
+    def __init__(self, db_connection):
+        super().__init__()
+        self.db_connection = db_connection
+        self.setWindowTitle("Data Validation Analysis")
+        self.resize(600, 400)
 
+        # Create QTableWidget
+        self.table_widget = QTableWidget()
+        self.table_widget.setColumnCount(3)
+        self.table_widget.setHorizontalHeaderLabels(['HOLE ID', 'ACTUAL LENGTH', 'VALIDATION'])
+
+        # Set layout
+        layout = QVBoxLayout()
+        layout.addWidget(self.table_widget)
+        self.setLayout(layout)
+
+        # Load data into table
+        self.load_analysis_data()
+
+    def load_analysis_data(self):
+        cursor = self.db_connection.cursor()
+
+        # Fetch hole_id and SUM(run_l) from detailedlog_composite table
+        cursor.execute("""
+            SELECT hole_id, SUM(run_l) as total_run_l
+            FROM detailedlog_composite
+            GROUP BY hole_id
+        """)
+        detailedlog_data = cursor.fetchall()
+
+        # Fetch hole_id and actual_length from collar_data table
+        cursor.execute("SELECT hole_id, actual_length FROM collar_data")
+        collar_data = cursor.fetchall()
+        collar_data_dict = {row[0]: row[1] for row in collar_data}
+
+        # Prepare data for the table and sort by validation status
+        table_data = []
+        for hole_id, total_run_l in detailedlog_data:
+            actual_length = collar_data_dict.get(hole_id, None)
+            validation_text = "Different from Collar Data" if actual_length is None or actual_length != total_run_l else "Valid"
+            table_data.append((hole_id, total_run_l, validation_text))
+
+        # Sort the table data so that 'Different from Collar Data' entries appear first
+        table_data.sort(key=lambda x: x[2] == "Valid")
+
+        self.table_widget.setRowCount(len(table_data))
+
+        # Populate the QTableWidget and set font color
+        for row_index, (hole_id, total_run_l, validation_text) in enumerate(table_data):
+            self.table_widget.setItem(row_index, 0, QTableWidgetItem(hole_id))
+            self.table_widget.setItem(row_index, 1, QTableWidgetItem(f"{total_run_l:.2f}"))
+            validation_item = QTableWidgetItem(validation_text)
+            
+            # Set the font color to red if validation is "Different from Collar Data"
+            if validation_text == "Different from Collar Data":
+                validation_item.setForeground(QColor("red"))
+            
+            self.table_widget.setItem(row_index, 2, validation_item)
+
+        # Optional: Auto resize columns to fit contents
+        self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -269,7 +330,19 @@ class MainWindow(QMainWindow):
         self.drillhole_menu.addAction(self.open_dh_data)
         #<-- end of DRILLHOLES menu -->
 
+        self.analysis_menu = self.menu_bar.addMenu("Analysis")
 
+        #This menu bar will the data validator from the inputted data of JFAL Detailed Core Log
+        self.analyze_btn = QAction("Analyze Data", self)
+        self.analyze_btn.triggered.connect(self.open_analysis_window)
+        self.analysis_menu.addAction(self.analyze_btn)
+        '''
+        Continue tomorrow.. To-Do
+        1. open a new table with columns ['HOLE ID ', 'ACTUAL LENGTH', 'VALIDATION RESULT']
+         when the Analyze Data button is clicked, list the imported data particular in HOLE_ID and the SUM of LENGTH column.
+        2. compare the total LENGTH vs ACTUAL_LENGTH in the collar_data table in database.
+        3. Display a validation result, if Valid "Validated" else "Different from Collar Data".
+        '''
         # Attempt to establish a database connection and cursor
         self.update_status_bar()
         self.load_hole_id_list()
@@ -281,76 +354,86 @@ class MainWindow(QMainWindow):
                                 "No database connection. Please open or create a database first.")
             return
 
+        # Open file dialog to select multiple Excel files
         file_dialog = QFileDialog(self)
         file_dialog.setNameFilter("Excel files (*.xlsm *.xlsx)")
         file_dialog.setFileMode(QFileDialog.ExistingFiles)
+        file_dialog.setViewMode(QFileDialog.List)
         if file_dialog.exec():
             file_paths = file_dialog.selectedFiles()
             if file_paths:
                 self.progress_bar.setVisible(True)
-                # Process the file and update the database
-                self.process_file(file_paths[0])
-                # After processing the file, refresh the QListView
+
+                # Process each file
+                total_files = len(file_paths)
+                for file_index, file_path in enumerate(file_paths, start=1):
+                    self.process_file(file_path, file_index, total_files)
+
+                # After processing all files, refresh the QListView and update columns
                 self.load_hole_id_list()
-                # Update LITHO_2 column based on lithology_ref table
                 self.update_litho_1_column()
                 self.update_structure_1_column()
                 self.update_alteration_1_column()
+
                 self.progress_bar.setVisible(False)
 
-    def process_file(self, file_path):
-        workbook = openpyxl.load_workbook(file_path, data_only=True)
-        if "Log1" not in workbook.sheetnames:
-            QMessageBox.warning(self, "Error", "Sheet 'Log1' not found in the workbook.")
-            self.progress_bar.setVisible(False)
-            return
+    def process_file(self, file_path, file_index, total_files):
+        try:
+            # Load the workbook and check for the correct sheet
+            workbook = openpyxl.load_workbook(file_path, data_only=True)
+            if "Log1" not in workbook.sheetnames:
+                QMessageBox.warning(self, "Error", f"Sheet 'Log1' not found in {file_path}.")
+                return
 
-        sheet = workbook["Log1"]
+            sheet = workbook["Log1"]
 
-        # Calculate the total number of rows to process
-        total_rows = sheet.max_row - 5  # Since we're starting from row 6
-        self.progress_bar.setMaximum(total_rows)
+            # Calculate the total number of rows to process
+            total_rows = sheet.max_row - 5  # Assuming we're starting from row 6
+            self.progress_bar.setMaximum(total_rows * total_files)
+            self.progress_bar.setValue((file_index - 1) * total_rows)
 
-        for index, row in enumerate(sheet.iter_rows(min_row=6, min_col=2, max_col=49, values_only=True), start=1):
-            # Make sure to continue processing even if some cells are None
-            if all(cell is None for cell in row):
-                continue  # Skip completely empty rows
+            # Iterate through the rows and process data
+            for index, row in enumerate(sheet.iter_rows(min_row=6, min_col=2, max_col=49, values_only=True), start=1):
+                # Skip completely empty rows
+                if all(cell is None for cell in row):
+                    continue
 
-            # Ensure the row length matches the number of expected columns
-            hole_id = row[0] if len(row) > 0 and row[0] is not None else ""
-            from_l = round(row[1], 3) if len(row) > 1 and row[1] is not None else 0.0
-            to_l = round(row[2], 3) if len(row) > 2 and row[2] is not None else 0.0
-            run_l = round(row[3], 3) if len(row) > 3 and row[3] is not None else 0.0
-            struc_2 = row[7] if len(row) > 7 and row[7] is not None else ""
-            litho_2 = row[8] if len(row) > 8 and row[8] is not None else ""
-            alt_2 = row[21] if len(row) > 21 and row[21] is not None else ""
-            description = row[47] if len(row) > 47 and row[47] is not None else ""
+                # Extract and clean data
+                hole_id = row[0] if len(row) > 0 and row[0] is not None else ""
+                from_l = round(row[1], 3) if len(row) > 1 and row[1] is not None else 0.0
+                to_l = round(row[2], 3) if len(row) > 2 and row[2] is not None else 0.0
+                run_l = round(row[3], 3) if len(row) > 3 and row[3] is not None else 0.0
+                struc_2 = row[7] if len(row) > 7 and row[7] is not None else ""
+                litho_2 = row[8] if len(row) > 8 and row[8] is not None else ""
+                alt_2 = row[21] if len(row) > 21 and row[21] is not None else ""
+                description = row[47] if len(row) > 47 and row[47] is not None else ""
+                
+                """
+                Version 1.1 5-Feb-2024 JFAL BALABAG VERSION 
+                
+                No. of columns - 50
+                
+                hole_id - column 1 index 0 
+                from_l - column 2 index 1 -> (using 2 decimal places)
+                to_l - column 3 index 2 -> (using 2 decimal places)
+                run_l - column 4 index 3 -> (using 2 decimal places)
+                litho_2 - column 9 index 8
+                struc_2 - column 8 index 7
+                alt_2 - column 23 index 22
+                description - row 48 index 47
+                
+                """
 
-            """
-            Version 1.1 5-Feb-2024 JFAL BALABAG VERSION 
-            
-            No. of columns - 50
-            
-            hole_id - column 1 index 0 
-            from_l - column 2 index 1 -> (using 2 decimal places)
-            to_l - column 3 index 2 -> (using 2 decimal places)
-            run_l - column 4 index 3 -> (using 2 decimal places)
-            litho_2 - column 9 index 8
-            struc_2 - column 8 index 7
-            alt_2 - column 23 index 22
-            description - row 48 index 47
-            
-            """
+                # Insert data into the database
+                self.insert_data(hole_id, from_l, to_l, run_l, litho_2, struc_2, alt_2, description)
 
-            # Insert data into the database
-            self.insert_data(hole_id, from_l, to_l, run_l, litho_2, struc_2, alt_2, description)
+                # Update progress bar
+                self.progress_bar.setValue((file_index - 1) * total_rows + index)
+                QApplication.processEvents()
 
-            # Update progress bar
-            self.progress_bar.setValue(index)
-            QApplication.processEvents()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to import data from {file_path}: {str(e)}")
 
-        self.progress_bar.setVisible(False)
-        QMessageBox.information(self, "Success", "File imported successfully.")
 
     def insert_data(self, hole_id, from_l, to_l, run_l, litho_2, struc_2, alt_2, description):
         if not self.db_connection:
@@ -899,6 +982,14 @@ class MainWindow(QMainWindow):
         
         # Populate the table with data
         self.populate_collar_data_table()
+
+    def open_analysis_window(self):
+        if not self.db_connection:
+            QMessageBox.warning(self, "Database Error", "No database connection. Please open or create a database first.")
+            return
+
+        self.analysis_window = AnalysisWindow(self.db_connection)
+        self.analysis_window.show()
 
     def populate_collar_data_table(self):
         try:
